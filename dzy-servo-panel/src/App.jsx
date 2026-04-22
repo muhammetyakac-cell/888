@@ -7,7 +7,7 @@ import {
 
 const supabaseUrl = 'https://phicbgmciqrfeuwbnlrv.supabase.co';
 const supabaseKey = 'sb_publishable_KsP-lQCVJyafRSMlN_5h2Q_tjlXNayt';
-const supabase   = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ── Renkler ────────────────────────────────────────────────
 const C = {
@@ -17,6 +17,7 @@ const C = {
   orange: '#f97316',
   blue:   '#60a5fa',
   indigo: '#818cf8',
+  slate:  '#94a3b8',
 };
 
 // ── Hızlı aralık seçenekleri ───────────────────────────────
@@ -74,11 +75,43 @@ const ChartTooltip = ({ active, payload, label }) => {
   );
 };
 
+// ─── Mini Grafik (Dashboard için) ─────────────────────────
+const MiniChart = ({ data, dataKey, color, unit, label, type = 'area' }) => (
+  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4 hover:border-slate-700 transition-colors">
+    <SectionTitle>{label}</SectionTitle>
+    <ResponsiveContainer width="100%" height={120}>
+      {type === 'line' ? (
+        <LineChart data={data} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+          <XAxis dataKey="t" tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
+          <YAxis tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
+          <Tooltip content={<ChartTooltip />} />
+          <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2} dot={false} name={label} />
+        </LineChart>
+      ) : (
+        <AreaChart data={data} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
+          <defs>
+            <linearGradient id={`grad-${dataKey}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor={color} stopOpacity={0.25} />
+              <stop offset="95%" stopColor={color} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+          <XAxis dataKey="t" tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
+          <YAxis tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
+          <Tooltip content={<ChartTooltip />} />
+          <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2}
+            fill={`url(#grad-${dataKey})`} name={label} />
+        </AreaChart>
+      )}
+    </ResponsiveContainer>
+  </div>
+);
+
 // ── Tarih aralığı seçici ───────────────────────────────────
 const RangePicker = ({ from, to, onFrom, onTo, onQuick, activeQuick, loading, recordCount }) => (
   <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 mb-5">
     <div className="flex flex-wrap items-end gap-3">
-
       <div className="flex flex-col gap-1">
         <span className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">Hızlı Aralık</span>
         <div className="flex flex-wrap gap-1.5">
@@ -125,7 +158,7 @@ const RangePicker = ({ from, to, onFrom, onTo, onQuick, activeQuick, loading, re
   </div>
 );
 
-// ── Grafik bileşenleri ─────────────────────────────────────
+// ── Büyük grafik bileşenleri ───────────────────────────────
 const BigAreaChart = ({ data, keys, title, height = 220 }) => (
   <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
     <SectionTitle>{title}</SectionTitle>
@@ -181,6 +214,7 @@ export default function App() {
   });
   const [countdown,  setCountdown]  = useState(null);
   const [activeTab,  setActiveTab]  = useState('dashboard');
+  const [miniLogs,   setMiniLogs]   = useState([]); // Dashboard mini grafikler için
   const [chartData,  setChartData]  = useState([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [activeQuick, setActiveQuick]   = useState(1440);
@@ -199,10 +233,30 @@ export default function App() {
   const [rangeTo,   setRangeTo]   = useState(init.to);
   const timerRef = useRef(null);
 
-  // ── Cihaz verisi ─────────────────────────────────────────
+  // ── Dashboard mini logları çek ───────────────────────────
+  const fetchMiniLogs = useCallback(async () => {
+    const { data } = await supabase
+      .from('device_logs')
+      .select('created_at,ambient_temp,cpu_temp,humidity,power_ma,wifi_rssi')
+      .order('created_at', { ascending: false })
+      .limit(60);
+    if (!data) return;
+    const chartReady = [...data].reverse().map(r => ({
+      t: fmtTime(r.created_at),
+      ambient_temp: r.ambient_temp,
+      cpu_temp: r.cpu_temp,
+      humidity: r.humidity,
+      power_ma: r.power_ma,
+      wifi_rssi: r.wifi_rssi,
+    }));
+    setMiniLogs(chartReady);
+  }, []);
+
+  // ── Cihaz verisi + realtime ──────────────────────────────
   useEffect(() => {
     supabase.from('devices').select('*').eq('id', 1).single()
       .then(({ data }) => data && setDevice(data));
+    fetchMiniLogs();
 
     const ch = supabase.channel('db-live')
       .on('postgres_changes',
@@ -210,13 +264,17 @@ export default function App() {
         ({ new: n }) => { setDevice(n); if (n.servo_angle === 0) setCountdown(null); })
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'device_logs' },
-        () => { fetchChartData(rangeFrom, rangeTo); fetchLogRows(0, rangeFrom, rangeTo); })
+        () => {
+          fetchMiniLogs();
+          if (activeTab === 'charts') fetchChartData(rangeFrom, rangeTo);
+          if (activeTab === 'logs') fetchLogRows(logPage, rangeFrom, rangeTo);
+        })
       .subscribe();
 
     return () => supabase.removeChannel(ch);
   }, []);
 
-  // ── Grafik verisi ─────────────────────────────────────────
+  // ── Grafik verisi (Charts tab) ───────────────────────────
   const fetchChartData = useCallback(async (from, to) => {
     setChartLoading(true);
     let q = supabase
@@ -243,7 +301,7 @@ export default function App() {
     setChartLoading(false);
   }, []);
 
-  // ── Log tablosu ───────────────────────────────────────────
+  // ── Log tablosu (Logs tab) ───────────────────────────────
   const fetchLogRows = useCallback(async (page = 0, from = rangeFrom, to = rangeTo) => {
     setLogLoading(true);
     let q = supabase
@@ -258,6 +316,7 @@ export default function App() {
     setLogLoading(false);
   }, [rangeFrom, rangeTo]);
 
+  // ── Tab değişince veri çek ───────────────────────────────
   useEffect(() => {
     if (activeTab === 'charts') fetchChartData(rangeFrom, rangeTo);
     if (activeTab === 'logs')   fetchLogRows(logPage, rangeFrom, rangeTo);
@@ -306,7 +365,7 @@ export default function App() {
   const rssiPct   = Math.max(0, Math.min(100, ((device.wifi_rssi + 100) / 60) * 100));
   const rssiColor = rssiPct > 60 ? C.green : rssiPct > 30 ? C.orange : C.rose;
 
-  // ── İstatistik hesapla ────────────────────────────────────
+  // ── İstatistik hesapla (Charts tab) ───────────────────────
   const stat = (key, fn = 'avg') => {
     const vals = chartData.map(d => d[key]).filter(v => v != null && isFinite(v));
     if (!vals.length) return '—';
@@ -444,6 +503,19 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            {/* Mini Grafikler (Dashboard) */}
+            {miniLogs.length > 0 && (
+              <div>
+                <SectionTitle>Quick Trends — Last {miniLogs.length} Records</SectionTitle>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                  <MiniChart data={miniLogs} dataKey="ambient_temp" color={C.rose}   unit="°C" label="Ambient Temp" />
+                  <MiniChart data={miniLogs} dataKey="humidity"     color={C.cyan}   unit="%"  label="Humidity" />
+                  <MiniChart data={miniLogs} dataKey="cpu_temp"     color={C.orange} unit="°"  label="CPU Temp" />
+                  <MiniChart data={miniLogs} dataKey="power_ma"     color={C.blue}   unit="mA" label="Power Draw" type="line" />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -465,7 +537,6 @@ export default function App() {
 
             {chartData.length > 0 && (
               <div className="space-y-5">
-
                 <BigAreaChart
                   data={chartData}
                   title="Ambient Temperature & Humidity"
@@ -499,16 +570,15 @@ export default function App() {
                   yDomain={[-100, -30]}
                 />
 
-                {/* Aralık istatistikleri */}
                 <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
                   <SectionTitle>Aralık İstatistikleri — {chartData.length} ölçüm</SectionTitle>
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-5">
                     {[
                       { label: 'Ort. Sıcaklık', key: 'ambient_temp', color: C.rose,   unit: '°C' },
-                      { label: 'Ort. Nem',       key: 'humidity',     color: C.cyan,   unit: '%'  },
-                      { label: 'Maks CPU',       key: 'cpu_temp',     color: C.orange, unit: '°',  fn: 'max' },
-                      { label: 'Ort. Güç',       key: 'power_ma',     color: C.blue,   unit: 'mA' },
-                      { label: 'En İyi RSSI',    key: 'wifi_rssi',    color: C.indigo, unit: 'dB', fn: 'max' },
+                      { label: 'Ort. Nem',      key: 'humidity',     color: C.cyan,   unit: '%'  },
+                      { label: 'Maks CPU',      key: 'cpu_temp',     color: C.orange, unit: '°',  fn: 'max' },
+                      { label: 'Ort. Güç',      key: 'power_ma',     color: C.blue,   unit: 'mA' },
+                      { label: 'En İyi RSSI',   key: 'wifi_rssi',    color: C.indigo, unit: 'dB', fn: 'max' },
                     ].map(({ label, key, color, unit, fn }) => (
                       <div key={key} className="flex flex-col gap-1">
                         <span className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">{label}</span>
@@ -519,7 +589,6 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-
               </div>
             )}
           </div>
