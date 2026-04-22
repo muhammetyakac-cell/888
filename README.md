@@ -5,7 +5,7 @@
 
 🔴 **[Live Demo](https://esp32-henna.vercel.app/)**
 
-![Dashboard Preview](docs/screenshot.png)
+![Dashboard Preview](dzy-servo-panel/docs/screenshot.png)
 
 ---
 
