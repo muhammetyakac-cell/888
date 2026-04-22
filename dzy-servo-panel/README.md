@@ -1,16 +1,38 @@
-# React + Vite
+# DZY Servo Panel
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> Real-time IoT telemetry dashboard with remote servo control.  
+> Hardware meets cloud — ESP32 to Supabase to React.
 
-Currently, two official plugins are available:
+🔴 **[Live Demo](https://esp32-henna.vercel.app/)**
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+![Dashboard Preview](docs/screenshot.png)
 
-## React Compiler
+---
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## The Problem
 
-## Expanding the ESLint configuration
+Off-the-shelf remote PC control solutions required Bluetooth hubs, 
+third-party mobile apps, and constant vendor updates — creating 
+unnecessary dependency and cost.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+This system replaced all of that with a custom ESP32-based device 
+and a cloud-connected dashboard. Total hardware cost: ~$15.
+
+---
+
+## What It Does
+
+- **Real-time telemetry** — temperature, humidity, CPU heat, 
+  power draw, and WiFi signal streamed live via Supabase Realtime
+- **Remote servo control** — set target angle from anywhere, 
+  hardware syncs within seconds
+- **Historical analysis** — filter logs by time range (1h to 7d), 
+  visualize trends with interactive charts
+- **Offline queue** — device stores readings locally when 
+  WiFi drops, flushes on reconnect
+- **Auto-return logic** — predefined angles (70°/90°) trigger 
+  timed automatic return to 0°
+
+---
+
+## Architecture
