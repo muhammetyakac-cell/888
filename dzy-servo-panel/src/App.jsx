@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import {
   AreaChart, Area, LineChart, Line,
-  XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
+  XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend
 } from 'recharts';
 
 const supabaseUrl = 'https://phicbgmciqrfeuwbnlrv.supabase.co';
 const supabaseKey = 'sb_publishable_KsP-lQCVJyafRSMlN_5h2Q_tjlXNayt';
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase   = createClient(supabaseUrl, supabaseKey);
 
-// ─── Renk paleti ───────────────────────────────────────────
+// ── Renkler ────────────────────────────────────────────────
 const C = {
   green:  '#22c55e',
   rose:   '#f43f5e',
@@ -17,10 +17,35 @@ const C = {
   orange: '#f97316',
   blue:   '#60a5fa',
   indigo: '#818cf8',
-  slate:  '#94a3b8',
 };
 
-// ─── Küçük yardımcı bileşenler ────────────────────────────
+// ── Hızlı aralık seçenekleri ───────────────────────────────
+const QUICK_RANGES = [
+  { label: 'Son 1s',  minutes: 60 },
+  { label: 'Son 6s',  minutes: 360 },
+  { label: 'Son 24s', minutes: 1440 },
+  { label: 'Son 3g',  minutes: 4320 },
+  { label: 'Son 7g',  minutes: 10080 },
+  { label: 'Tümü',    minutes: null },
+];
+
+// ── Yardımcılar ────────────────────────────────────────────
+const toLocalInput = (date) => {
+  const d = new Date(date);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+};
+
+const fmtTime = (iso) =>
+  new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+
+const fmtDateTime = (iso) =>
+  new Date(iso).toLocaleString('tr-TR', {
+    month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+
+// ── Bileşenler ─────────────────────────────────────────────
 const StatCard = ({ label, value, color, unit = '' }) => (
   <div style={{ borderLeftColor: color }}
     className="bg-slate-900/50 border border-slate-800 border-l-4 p-4 rounded-2xl flex flex-col gap-1 hover:bg-slate-900/80 transition-colors">
@@ -35,118 +60,237 @@ const SectionTitle = ({ children }) => (
   <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 mb-4">{children}</h3>
 );
 
-// ─── Custom Tooltip ───────────────────────────────────────
-const ChartTooltip = ({ active, payload, label, unit }) => {
+const ChartTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono shadow-xl">
       <p className="text-slate-400 mb-1">{label}</p>
       {payload.map((p, i) => (
         <p key={i} style={{ color: p.color }} className="font-bold">
-          {p.name}: {typeof p.value === 'number' ? p.value.toFixed(1) : p.value}{unit}
+          {p.name}: {typeof p.value === 'number' ? p.value.toFixed(1) : p.value}
         </p>
       ))}
     </div>
   );
 };
 
-// ─── Grafik sarmalayıcı ───────────────────────────────────
-const MiniChart = ({ data, dataKey, color, unit, label, type = 'area' }) => (
-  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4 hover:border-slate-700 transition-colors">
-    <SectionTitle>{label}</SectionTitle>
-    <ResponsiveContainer width="100%" height={120}>
-      {type === 'line' ? (
-        <LineChart data={data} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-          <XAxis dataKey="t" tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
-          <YAxis tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
-          <Tooltip content={<ChartTooltip unit={unit} />} />
-          <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2}
-            dot={false} name={label} />
-        </LineChart>
-      ) : (
-        <AreaChart data={data} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
-          <defs>
-            <linearGradient id={`grad-${dataKey}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={color} stopOpacity={0.25} />
-              <stop offset="95%" stopColor={color} stopOpacity={0} />
+// ── Tarih aralığı seçici ───────────────────────────────────
+const RangePicker = ({ from, to, onFrom, onTo, onQuick, activeQuick, loading, recordCount }) => (
+  <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 mb-5">
+    <div className="flex flex-wrap items-end gap-3">
+
+      <div className="flex flex-col gap-1">
+        <span className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">Hızlı Aralık</span>
+        <div className="flex flex-wrap gap-1.5">
+          {QUICK_RANGES.map(r => (
+            <button key={r.label} onClick={() => onQuick(r.minutes)}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                activeQuick === r.minutes
+                  ? 'bg-green-500 text-black shadow-[0_0_8px_rgba(34,197,94,0.4)]'
+                  : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+              }`}>
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="hidden md:block w-px h-10 bg-slate-700 self-center" />
+
+      <div className="flex flex-col gap-1">
+        <span className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">Başlangıç</span>
+        <input type="datetime-local" value={from} onChange={e => onFrom(e.target.value)}
+          className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-1.5
+            focus:outline-none focus:border-green-500/50 font-mono cursor-pointer" />
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <span className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">Bitiş</span>
+        <input type="datetime-local" value={to} onChange={e => onTo(e.target.value)}
+          className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-1.5
+            focus:outline-none focus:border-green-500/50 font-mono cursor-pointer" />
+      </div>
+
+      <div className="ml-auto flex items-center gap-3 self-end">
+        {loading && (
+          <span className="text-[10px] text-green-500 animate-pulse font-black uppercase">Yükleniyor...</span>
+        )}
+        {!loading && recordCount !== null && (
+          <span className="text-[10px] text-slate-500 font-mono">
+            <span className="text-green-400 font-black">{recordCount}</span> kayıt
+          </span>
+        )}
+      </div>
+    </div>
+  </div>
+);
+
+// ── Grafik bileşenleri ─────────────────────────────────────
+const BigAreaChart = ({ data, keys, title, height = 220 }) => (
+  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+    <SectionTitle>{title}</SectionTitle>
+    <ResponsiveContainer width="100%" height={height}>
+      <AreaChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+        <defs>
+          {keys.map(k => (
+            <linearGradient key={k.key} id={`g-${k.key}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor={k.color} stopOpacity={0.3} />
+              <stop offset="95%" stopColor={k.color} stopOpacity={0} />
             </linearGradient>
-          </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-          <XAxis dataKey="t" tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
-          <YAxis tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
-          <Tooltip content={<ChartTooltip unit={unit} />} />
-          <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2}
-            fill={`url(#grad-${dataKey})`} name={label} />
-        </AreaChart>
-      )}
+          ))}
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+        <XAxis dataKey="t" tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
+        <YAxis tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
+        <Tooltip content={<ChartTooltip />} />
+        <Legend wrapperStyle={{ fontSize: 10, color: '#64748b' }} />
+        {keys.map(k => (
+          <Area key={k.key} type="monotone" dataKey={k.key} stroke={k.color} strokeWidth={2}
+            fill={`url(#g-${k.key})`} name={k.name} dot={false} />
+        ))}
+      </AreaChart>
     </ResponsiveContainer>
   </div>
 );
 
-// ─── Ana uygulama ─────────────────────────────────────────
+const BigLineChart = ({ data, keys, title, height = 180, yDomain }) => (
+  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+    <SectionTitle>{title}</SectionTitle>
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+        <XAxis dataKey="t" tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
+        <YAxis tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false}
+          domain={yDomain || ['auto', 'auto']} />
+        <Tooltip content={<ChartTooltip />} />
+        <Legend wrapperStyle={{ fontSize: 10, color: '#64748b' }} />
+        {keys.map(k => (
+          <Line key={k.key} type="monotone" dataKey={k.key} stroke={k.color} strokeWidth={2}
+            dot={false} name={k.name} />
+        ))}
+      </LineChart>
+    </ResponsiveContainer>
+  </div>
+);
+
+// ── Ana uygulama ───────────────────────────────────────────
 export default function App() {
   const [device, setDevice] = useState({
     servo_angle: 0, cpu_temp: 0, power_ma: 0,
-    wifi_rssi: 0, last_servo_sync: 0,
-    ambient_temp: 0, humidity: 0
+    wifi_rssi: 0, last_servo_sync: 0, ambient_temp: 0, humidity: 0
   });
-  const [logs, setLogs] = useState([]);
-  const [countdown, setCountdown] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [logRows, setLogRows] = useState([]);
+  const [countdown,  setCountdown]  = useState(null);
+  const [activeTab,  setActiveTab]  = useState('dashboard');
+  const [chartData,  setChartData]  = useState([]);
+  const [chartLoading, setChartLoading] = useState(false);
+  const [activeQuick, setActiveQuick]   = useState(1440);
+  const [logRows,    setLogRows]    = useState([]);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logPage,    setLogPage]    = useState(0);
+  const LOG_PAGE_SIZE = 25;
+
+  const now24 = () => {
+    const to  = new Date();
+    const frm = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    return { from: toLocalInput(frm), to: toLocalInput(to) };
+  };
+  const init = now24();
+  const [rangeFrom, setRangeFrom] = useState(init.from);
+  const [rangeTo,   setRangeTo]   = useState(init.to);
   const timerRef = useRef(null);
 
-  // ── İlk yükleme + realtime ──────────────────────────────
+  // ── Cihaz verisi ─────────────────────────────────────────
   useEffect(() => {
-    const boot = async () => {
-      const { data: d } = await supabase.from('devices').select('*').eq('id', 1).single();
-      if (d) setDevice(d);
-      await fetchLogs();
-    };
-    boot();
+    supabase.from('devices').select('*').eq('id', 1).single()
+      .then(({ data }) => data && setDevice(data));
 
-    const ch = supabase.channel('db-changes')
+    const ch = supabase.channel('db-live')
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'devices', filter: 'id=eq.1' },
-        ({ new: n }) => {
-          setDevice(n);
-          if (n.servo_angle === 0) setCountdown(null);
-        })
+        ({ new: n }) => { setDevice(n); if (n.servo_angle === 0) setCountdown(null); })
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'device_logs' },
-        () => fetchLogs())
+        () => { fetchChartData(rangeFrom, rangeTo); fetchLogRows(0, rangeFrom, rangeTo); })
       .subscribe();
 
     return () => supabase.removeChannel(ch);
   }, []);
 
-  // ── Log geçmişi çek ─────────────────────────────────────
-  const fetchLogs = async () => {
-    const { data } = await supabase
+  // ── Grafik verisi ─────────────────────────────────────────
+  const fetchChartData = useCallback(async (from, to) => {
+    setChartLoading(true);
+    let q = supabase
+      .from('device_logs')
+      .select('created_at,ambient_temp,cpu_temp,humidity,power_ma,wifi_rssi')
+      .order('created_at', { ascending: true });
+    if (from) q = q.gte('created_at', new Date(from).toISOString());
+    if (to)   q = q.lte('created_at', new Date(to).toISOString());
+
+    const { data } = await q.limit(500);
+    if (data) {
+      const sampled = data.length > 200
+        ? data.filter((_, i) => i % Math.ceil(data.length / 200) === 0)
+        : data;
+      setChartData(sampled.map(r => ({
+        t:            fmtTime(r.created_at),
+        ambient_temp: r.ambient_temp,
+        cpu_temp:     r.cpu_temp,
+        humidity:     r.humidity,
+        power_ma:     r.power_ma,
+        wifi_rssi:    r.wifi_rssi,
+      })));
+    }
+    setChartLoading(false);
+  }, []);
+
+  // ── Log tablosu ───────────────────────────────────────────
+  const fetchLogRows = useCallback(async (page = 0, from = rangeFrom, to = rangeTo) => {
+    setLogLoading(true);
+    let q = supabase
       .from('device_logs')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(60);
-    if (!data) return;
+      .range(page * LOG_PAGE_SIZE, page * LOG_PAGE_SIZE + LOG_PAGE_SIZE - 1);
+    if (from) q = q.gte('created_at', new Date(from).toISOString());
+    if (to)   q = q.lte('created_at', new Date(to).toISOString());
+    const { data } = await q;
+    if (data) setLogRows(data);
+    setLogLoading(false);
+  }, [rangeFrom, rangeTo]);
 
-    // Grafik için: eski → yeni, saat:dakika etiketi
-    const chartReady = [...data].reverse().map(r => ({
-      t: new Date(r.created_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-      ambient_temp: r.ambient_temp,
-      cpu_temp: r.cpu_temp,
-      humidity: r.humidity,
-      power_ma: r.power_ma,
-      wifi_rssi: r.wifi_rssi,
-    }));
-    setLogs(chartReady);
-    setLogRows(data.slice(0, 20)); // Tablo için son 20
+  useEffect(() => {
+    if (activeTab === 'charts') fetchChartData(rangeFrom, rangeTo);
+    if (activeTab === 'logs')   fetchLogRows(logPage, rangeFrom, rangeTo);
+  }, [activeTab]);
+
+  // ── Hızlı aralık ─────────────────────────────────────────
+  const applyQuickRange = (minutes) => {
+    setActiveQuick(minutes);
+    let from = '', to = '';
+    if (minutes !== null) {
+      from = toLocalInput(new Date(Date.now() - minutes * 60 * 1000));
+      to   = toLocalInput(new Date());
+    }
+    setRangeFrom(from); setRangeTo(to);
+    if (activeTab === 'charts') fetchChartData(from, to);
+    if (activeTab === 'logs')   { setLogPage(0); fetchLogRows(0, from, to); }
   };
 
-  // ── Geri sayım ──────────────────────────────────────────
+  const handleFromChange = (v) => {
+    setRangeFrom(v); setActiveQuick(null);
+    if (activeTab === 'charts') fetchChartData(v, rangeTo);
+    if (activeTab === 'logs')   { setLogPage(0); fetchLogRows(0, v, rangeTo); }
+  };
+  const handleToChange = (v) => {
+    setRangeTo(v); setActiveQuick(null);
+    if (activeTab === 'charts') fetchChartData(rangeFrom, v);
+    if (activeTab === 'logs')   { setLogPage(0); fetchLogRows(0, rangeFrom, v); }
+  };
+
+  // ── Geri sayım ────────────────────────────────────────────
   useEffect(() => {
-    if (device.servo_angle === 70 && countdown === null) setCountdown(3);
-    if (device.servo_angle === 90 && countdown === null) setCountdown(15);
+    if (device.servo_angle === 70  && countdown === null) setCountdown(3);
+    if (device.servo_angle === 90  && countdown === null) setCountdown(15);
     if (countdown > 0) {
       timerRef.current = setTimeout(() => setCountdown(c => c - 1), 1000);
       return () => clearTimeout(timerRef.current);
@@ -159,31 +303,34 @@ export default function App() {
     await supabase.from('devices').update({ servo_angle: a }).eq('id', 1);
   };
 
-  // ── RSSI çubuk ──────────────────────────────────────────
-  const rssiPct = Math.max(0, Math.min(100, ((device.wifi_rssi + 100) / 60) * 100));
+  const rssiPct   = Math.max(0, Math.min(100, ((device.wifi_rssi + 100) / 60) * 100));
   const rssiColor = rssiPct > 60 ? C.green : rssiPct > 30 ? C.orange : C.rose;
 
-  // ── Tab içerikleri ───────────────────────────────────────
+  // ── İstatistik hesapla ────────────────────────────────────
+  const stat = (key, fn = 'avg') => {
+    const vals = chartData.map(d => d[key]).filter(v => v != null && isFinite(v));
+    if (!vals.length) return '—';
+    const v = fn === 'max' ? Math.max(...vals) : vals.reduce((a, b) => a + b, 0) / vals.length;
+    return v.toFixed(1);
+  };
+
   const tabs = ['dashboard', 'charts', 'logs'];
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-mono">
 
-      {/* ── Üst Bar ─────────────────────────────────────── */}
+      {/* ── Header ──────────────────────────────────────── */}
       <header className="border-b border-slate-800/60 bg-slate-950/80 backdrop-blur sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 md:px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-4 md:px-6 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 shrink-0">
             <div className="w-9 h-9 bg-green-500 rounded-lg flex items-center justify-center
-              text-black font-black text-sm shadow-[0_0_16px_rgba(34,197,94,0.35)]">
-              DZY
-            </div>
+              text-black font-black text-sm shadow-[0_0_16px_rgba(34,197,94,0.35)]">DZY</div>
             <div>
               <p className="text-sm font-black text-green-400 leading-none tracking-tight">YAZILIM DANISMA</p>
               <p className="text-[9px] text-slate-600 uppercase tracking-widest">Environmental Station v8.7</p>
             </div>
           </div>
 
-          {/* Tab bar */}
           <div className="flex gap-1 bg-slate-900 rounded-xl p-1">
             {tabs.map(t => (
               <button key={t} onClick={() => setActiveTab(t)}
@@ -191,39 +338,34 @@ export default function App() {
                   activeTab === t
                     ? 'bg-green-500 text-black shadow-[0_0_10px_rgba(34,197,94,0.3)]'
                     : 'text-slate-500 hover:text-slate-300'
-                }`}>
-                {t}
-              </button>
+                }`}>{t}</button>
             ))}
           </div>
 
-          <div className="flex items-center gap-2 bg-green-500/5 px-3 py-1.5 rounded-xl border border-green-500/20">
+          <div className="flex items-center gap-2 bg-green-500/5 px-3 py-1.5 rounded-xl border border-green-500/20 shrink-0">
             <span className={`w-2 h-2 rounded-full bg-green-500 ${countdown ? 'animate-ping' : 'animate-pulse'}`} />
-            <span className="text-[10px] text-green-400 font-black">{countdown ? 'PROCESSING' : 'STABLE'}</span>
+            <span className="text-[10px] text-green-400 font-black hidden sm:block">
+              {countdown ? 'PROCESSING' : 'STABLE'}
+            </span>
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 md:px-6 py-6">
 
-        {/* ══════════ DASHBOARD TAB ══════════ */}
+        {/* ══════════ DASHBOARD ══════════ */}
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
-
-            {/* Stat kartları */}
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
-              <StatCard label="Live Position"  value={`${device.last_servo_sync}°`} color={C.green} />
-              <StatCard label="Ambient Temp"   value={device.ambient_temp}           color={C.rose}   unit="°C" />
-              <StatCard label="Humidity"       value={device.humidity}               color={C.cyan}   unit="%" />
-              <StatCard label="CPU Core"       value={device.cpu_temp?.toFixed(1)}   color={C.orange} unit="°" />
-              <StatCard label="Current Load"   value={Math.round(device.power_ma)}   color={C.blue}   unit="mA" />
-              <StatCard label="Signal RSSI"    value={device.wifi_rssi}              color={C.indigo} unit=" dB" />
+              <StatCard label="Live Position" value={`${device.last_servo_sync}°`} color={C.green} />
+              <StatCard label="Ambient Temp"  value={device.ambient_temp}           color={C.rose}   unit="°C" />
+              <StatCard label="Humidity"      value={device.humidity}               color={C.cyan}   unit="%" />
+              <StatCard label="CPU Core"      value={device.cpu_temp?.toFixed(1)}   color={C.orange} unit="°" />
+              <StatCard label="Power Load"    value={Math.round(device.power_ma)}   color={C.blue}   unit="mA" />
+              <StatCard label="Signal RSSI"   value={device.wifi_rssi}              color={C.indigo} unit=" dB" />
             </div>
 
-            {/* Kontrol + Durum yan yana */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-
-              {/* Servo kontrol */}
               <div className="lg:col-span-2 bg-slate-900/60 border border-slate-800 p-6 rounded-3xl relative overflow-hidden">
                 {countdown !== null && (
                   <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-sm flex flex-col
@@ -236,7 +378,6 @@ export default function App() {
                       drop-shadow-[0_0_20px_rgba(34,197,94,0.4)]">{countdown}s</span>
                   </div>
                 )}
-
                 <div className="flex justify-between items-end mb-6">
                   <div>
                     <h3 className="text-lg font-black uppercase tracking-tight">Manual Override</h3>
@@ -247,11 +388,9 @@ export default function App() {
                     <span className="text-4xl font-black text-green-500">{device.servo_angle}°</span>
                   </div>
                 </div>
-
                 <input type="range" min="0" max="180" value={device.servo_angle}
                   onChange={e => updateAngle(+e.target.value)}
                   className="w-full h-3 bg-slate-800 rounded-full appearance-none cursor-pointer accent-green-500 mb-8" />
-
                 <div className="grid grid-cols-5 gap-3">
                   {[0, 45, 70, 90, 180].map(a => (
                     <button key={a} onClick={() => updateAngle(a)}
@@ -259,14 +398,11 @@ export default function App() {
                         device.servo_angle === a
                           ? 'bg-green-500 text-black border-green-500 shadow-[0_0_20px_rgba(34,197,94,0.4)] scale-105'
                           : 'bg-slate-950 border-slate-800 text-slate-500 hover:border-green-500/40 hover:text-green-400'
-                      }`}>
-                      {a}°
-                    </button>
+                      }`}>{a}°</button>
                   ))}
                 </div>
               </div>
 
-              {/* Durum paneli */}
               <div className="flex flex-col gap-4">
                 <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl flex-1">
                   <SectionTitle>Device Telemetry</SectionTitle>
@@ -275,19 +411,19 @@ export default function App() {
                       ['Hardware Sync', device.servo_angle === device.last_servo_sync
                         ? { text: 'MATCHED', color: C.green }
                         : { text: 'SYNCING...', color: '#eab308', pulse: true }],
-                      ['Admin', { text: 'Muhammet Deniz', color: '#cbd5e1' }],
-                      ['Region', { text: 'Buca_Hub_01', color: '#cbd5e1' }],
-                      ['Protocol', { text: 'MQTT-SYNC-v8', color: '#cbd5e1' }],
+                      ['Admin',    { text: 'Muhammet Deniz', color: '#cbd5e1' }],
+                      ['Region',   { text: 'Buca_Hub_01',    color: '#cbd5e1' }],
+                      ['Protocol', { text: 'MQTT-SYNC-v8',   color: '#cbd5e1' }],
                     ].map(([k, v]) => (
                       <div key={k} className="flex justify-between border-b border-slate-800/50 pb-2 last:border-0">
                         <span className="text-slate-600">{k}:</span>
-                        <span className={`font-bold ${v.pulse ? 'animate-pulse' : ''}`} style={{ color: v.color }}>{v.text}</span>
+                        <span className={`font-bold ${v.pulse ? 'animate-pulse' : ''}`}
+                          style={{ color: v.color }}>{v.text}</span>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* WiFi sinyal çubuğu */}
                 <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-3xl">
                   <SectionTitle>WiFi Signal</SectionTitle>
                   <div className="flex justify-between text-xs mb-2">
@@ -308,132 +444,112 @@ export default function App() {
                 </div>
               </div>
             </div>
-
-            {/* Özet grafikler (son 10 kayıt) */}
-            {logs.length > 0 && (
-              <div>
-                <SectionTitle>Quick Trends — Last {logs.length} Records</SectionTitle>
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                  <MiniChart data={logs} dataKey="ambient_temp" color={C.rose}   unit="°C" label="Ambient Temp" />
-                  <MiniChart data={logs} dataKey="humidity"     color={C.cyan}   unit="%"  label="Humidity" />
-                  <MiniChart data={logs} dataKey="cpu_temp"     color={C.orange} unit="°"  label="CPU Temp" />
-                  <MiniChart data={logs} dataKey="power_ma"     color={C.blue}   unit="mA" label="Power Draw" type="line" />
-                </div>
-              </div>
-            )}
           </div>
         )}
 
-        {/* ══════════ CHARTS TAB ══════════ */}
+        {/* ══════════ CHARTS ══════════ */}
         {activeTab === 'charts' && (
-          <div className="space-y-5">
-            {logs.length === 0 ? (
+          <div>
+            <RangePicker
+              from={rangeFrom} to={rangeTo}
+              onFrom={handleFromChange} onTo={handleToChange}
+              onQuick={applyQuickRange} activeQuick={activeQuick}
+              loading={chartLoading} recordCount={chartData.length}
+            />
+
+            {chartData.length === 0 && !chartLoading && (
               <div className="text-center text-slate-600 py-24 text-sm">
-                Henüz log verisi yok. ESP32 30 saniyede bir gönderir.
+                Bu aralıkta kayıt bulunamadı.
               </div>
-            ) : (
-              <>
-                {/* Sıcaklık + Nem büyük grafik */}
-                <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-                  <SectionTitle>Ambient Temperature & Humidity — Full History</SectionTitle>
-                  <ResponsiveContainer width="100%" height={220}>
-                    <AreaChart data={logs} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="grad-at" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%"  stopColor={C.rose} stopOpacity={0.3} />
-                          <stop offset="95%" stopColor={C.rose} stopOpacity={0} />
-                        </linearGradient>
-                        <linearGradient id="grad-hum" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%"  stopColor={C.cyan} stopOpacity={0.2} />
-                          <stop offset="95%" stopColor={C.cyan} stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis dataKey="t" tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
-                      <YAxis tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
-                      <Tooltip content={<ChartTooltip />} />
-                      <Area type="monotone" dataKey="ambient_temp" stroke={C.rose} strokeWidth={2}
-                        fill="url(#grad-at)" name="Ambient °C" />
-                      <Area type="monotone" dataKey="humidity" stroke={C.cyan} strokeWidth={2}
-                        fill="url(#grad-hum)" name="Humidity %" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
+            )}
 
-                {/* CPU + Güç */}
+            {chartData.length > 0 && (
+              <div className="space-y-5">
+
+                <BigAreaChart
+                  data={chartData}
+                  title="Ambient Temperature & Humidity"
+                  keys={[
+                    { key: 'ambient_temp', color: C.rose, name: 'Ambient °C' },
+                    { key: 'humidity',     color: C.cyan, name: 'Humidity %' },
+                  ]}
+                  height={220}
+                />
+
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-                    <SectionTitle>CPU Temperature</SectionTitle>
-                    <ResponsiveContainer width="100%" height={180}>
-                      <AreaChart data={logs} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="grad-cpu" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%"  stopColor={C.orange} stopOpacity={0.3} />
-                            <stop offset="95%" stopColor={C.orange} stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                        <XAxis dataKey="t" tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
-                        <YAxis tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
-                        <Tooltip content={<ChartTooltip unit="°" />} />
-                        <Area type="monotone" dataKey="cpu_temp" stroke={C.orange} strokeWidth={2}
-                          fill="url(#grad-cpu)" name="CPU °" />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-                    <SectionTitle>Power Draw (mA)</SectionTitle>
-                    <ResponsiveContainer width="100%" height={180}>
-                      <LineChart data={logs} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                        <XAxis dataKey="t" tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
-                        <YAxis tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
-                        <Tooltip content={<ChartTooltip unit="mA" />} />
-                        <Line type="monotone" dataKey="power_ma" stroke={C.blue} strokeWidth={2}
-                          dot={false} name="mA" />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
+                  <BigAreaChart
+                    data={chartData}
+                    title="CPU Temperature"
+                    keys={[{ key: 'cpu_temp', color: C.orange, name: 'CPU °' }]}
+                    height={180}
+                  />
+                  <BigLineChart
+                    data={chartData}
+                    title="Power Draw (mA)"
+                    keys={[{ key: 'power_ma', color: C.blue, name: 'mA' }]}
+                    height={180}
+                  />
                 </div>
 
-                {/* WiFi RSSI */}
+                <BigLineChart
+                  data={chartData}
+                  title="WiFi RSSI History"
+                  keys={[{ key: 'wifi_rssi', color: C.indigo, name: 'dBm' }]}
+                  height={140}
+                  yDomain={[-100, -30]}
+                />
+
+                {/* Aralık istatistikleri */}
                 <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-                  <SectionTitle>WiFi RSSI History</SectionTitle>
-                  <ResponsiveContainer width="100%" height={140}>
-                    <LineChart data={logs} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis dataKey="t" tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} />
-                      <YAxis tick={{ fill: '#475569', fontSize: 9 }} tickLine={false} axisLine={false} domain={[-100, -30]} />
-                      <Tooltip content={<ChartTooltip unit=" dBm" />} />
-                      <Line type="monotone" dataKey="wifi_rssi" stroke={C.indigo} strokeWidth={2}
-                        dot={false} name="RSSI" />
-                    </LineChart>
-                  </ResponsiveContainer>
+                  <SectionTitle>Aralık İstatistikleri — {chartData.length} ölçüm</SectionTitle>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-5">
+                    {[
+                      { label: 'Ort. Sıcaklık', key: 'ambient_temp', color: C.rose,   unit: '°C' },
+                      { label: 'Ort. Nem',       key: 'humidity',     color: C.cyan,   unit: '%'  },
+                      { label: 'Maks CPU',       key: 'cpu_temp',     color: C.orange, unit: '°',  fn: 'max' },
+                      { label: 'Ort. Güç',       key: 'power_ma',     color: C.blue,   unit: 'mA' },
+                      { label: 'En İyi RSSI',    key: 'wifi_rssi',    color: C.indigo, unit: 'dB', fn: 'max' },
+                    ].map(({ label, key, color, unit, fn }) => (
+                      <div key={key} className="flex flex-col gap-1">
+                        <span className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">{label}</span>
+                        <span className="text-2xl font-black" style={{ color }}>
+                          {stat(key, fn)}<span className="text-sm ml-0.5">{unit}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </>
+
+              </div>
             )}
           </div>
         )}
 
-        {/* ══════════ LOGS TAB ══════════ */}
+        {/* ══════════ LOGS ══════════ */}
         {activeTab === 'logs' && (
           <div>
+            <RangePicker
+              from={rangeFrom} to={rangeTo}
+              onFrom={handleFromChange} onTo={handleToChange}
+              onQuick={applyQuickRange} activeQuick={activeQuick}
+              loading={logLoading} recordCount={logRows.length}
+            />
+
             <div className="flex justify-between items-center mb-4">
-              <SectionTitle>Device Log History — Last 20 Records</SectionTitle>
-              <button onClick={fetchLogs}
+              <SectionTitle>Log Kayıtları</SectionTitle>
+              <button onClick={() => fetchLogRows(logPage, rangeFrom, rangeTo)}
                 className="text-[10px] font-black uppercase tracking-widest text-green-500
                   border border-green-500/30 px-3 py-1.5 rounded-lg hover:bg-green-500/10 transition-colors">
-                ↻ Refresh
+                ↻ Yenile
               </button>
             </div>
 
-            <div className="overflow-x-auto rounded-2xl border border-slate-800">
+            <div className="overflow-x-auto rounded-2xl border border-slate-800 mb-4">
               <table className="w-full text-xs font-mono">
                 <thead>
                   <tr className="bg-slate-900 text-slate-500 text-[10px] uppercase tracking-widest">
-                    {['Time', 'Amb °C', 'Hum %', 'CPU °', 'Power mA', 'RSSI', 'Servo °'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left font-bold">{h}</th>
+                    {['Zaman', 'Amb °C', 'Nem %', 'CPU °', 'mA', 'RSSI', 'Servo'].map(h => (
+                      <th key={h} className="px-4 py-3 text-left font-bold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -442,29 +558,43 @@ export default function App() {
                     <tr key={r.id}
                       className={`border-t border-slate-800/50 transition-colors
                         ${i % 2 === 0 ? 'bg-slate-900/20' : 'bg-slate-950'} hover:bg-slate-800/40`}>
-                      <td className="px-4 py-2.5 text-slate-500">
-                        {new Date(r.created_at).toLocaleString('tr-TR', {
-                          month: '2-digit', day: '2-digit',
-                          hour: '2-digit', minute: '2-digit', second: '2-digit'
-                        })}
-                      </td>
-                      <td className="px-4 py-2.5 font-bold" style={{ color: C.rose }}>{r.ambient_temp?.toFixed(1)}</td>
-                      <td className="px-4 py-2.5 font-bold" style={{ color: C.cyan }}>{r.humidity?.toFixed(1)}</td>
+                      <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
+                      <td className="px-4 py-2.5 font-bold" style={{ color: C.rose }}>  {r.ambient_temp?.toFixed(1)}</td>
+                      <td className="px-4 py-2.5 font-bold" style={{ color: C.cyan }}>  {r.humidity?.toFixed(1)}</td>
                       <td className="px-4 py-2.5 font-bold" style={{ color: C.orange }}>{r.cpu_temp?.toFixed(1)}</td>
-                      <td className="px-4 py-2.5 font-bold" style={{ color: C.blue }}>{Math.round(r.power_ma)}</td>
+                      <td className="px-4 py-2.5 font-bold" style={{ color: C.blue }}>  {Math.round(r.power_ma)}</td>
                       <td className="px-4 py-2.5 font-bold" style={{ color: C.indigo }}>{r.wifi_rssi}</td>
-                      <td className="px-4 py-2.5 font-bold" style={{ color: C.green }}>{r.servo_angle}°</td>
+                      <td className="px-4 py-2.5 font-bold" style={{ color: C.green }}> {r.servo_angle}°</td>
                     </tr>
                   ))}
-                  {logRows.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="px-4 py-12 text-center text-slate-600">
-                        Henüz log kaydı yok.
-                      </td>
-                    </tr>
+                  {logRows.length === 0 && !logLoading && (
+                    <tr><td colSpan={7} className="px-4 py-12 text-center text-slate-600">
+                      Bu aralıkta kayıt yok.
+                    </td></tr>
                   )}
                 </tbody>
               </table>
+            </div>
+
+            {/* Sayfalama */}
+            <div className="flex justify-center items-center gap-3">
+              <button
+                onClick={() => { const p = Math.max(0, logPage - 1); setLogPage(p); fetchLogRows(p, rangeFrom, rangeTo); }}
+                disabled={logPage === 0}
+                className="px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest
+                  bg-slate-900 border border-slate-800 text-slate-400
+                  disabled:opacity-30 hover:border-green-500/40 hover:text-green-400 transition-colors">
+                ← Önceki
+              </button>
+              <span className="text-[10px] text-slate-500 font-mono">Sayfa {logPage + 1}</span>
+              <button
+                onClick={() => { const p = logPage + 1; setLogPage(p); fetchLogRows(p, rangeFrom, rangeTo); }}
+                disabled={logRows.length < LOG_PAGE_SIZE}
+                className="px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest
+                  bg-slate-900 border border-slate-800 text-slate-400
+                  disabled:opacity-30 hover:border-green-500/40 hover:text-green-400 transition-colors">
+                Sonraki →
+              </button>
             </div>
           </div>
         )}
