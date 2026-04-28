@@ -11,6 +11,10 @@ const HOME_SUPABASE_KEY = 'sb_publishable_KsP-lQCVJyafRSMlN_5h2Q_tjlXNayt';
 // Login / kullanıcı yönetimi için master panel veritabanı
 const masterSupabase = createClient(HOME_SUPABASE_URL, HOME_SUPABASE_KEY);
 
+
+const ADMIN_BOOTSTRAP_USERNAME = 'admin';
+const ADMIN_BOOTSTRAP_PASSWORD = '19871987';
+
 const C = {
   green: '#22c55e',
   rose: '#f43f5e',
@@ -303,11 +307,30 @@ export default function App() {
 
   const handleLogin = async () => {
     setLoginError('');
+    const username = loginForm.username.trim();
+    const password = loginForm.password;
+
+    if (username === ADMIN_BOOTSTRAP_USERNAME && password === ADMIN_BOOTSTRAP_PASSWORD) {
+      setSessionUser({
+        id: 'bootstrap-admin',
+        role: 'admin',
+        username: ADMIN_BOOTSTRAP_USERNAME,
+        customer_name: 'Admin',
+        device_id: 1,
+        tenant_supabase_url: HOME_SUPABASE_URL,
+        tenant_supabase_anon_key: HOME_SUPABASE_KEY,
+        is_active: true,
+      });
+      setSelectedTenantUserId('self');
+      setActiveTab('dashboard');
+      return;
+    }
+
     const { data, error } = await masterSupabase
       .from('panel_users')
       .select('*')
-      .eq('username', loginForm.username.trim())
-      .eq('password', loginForm.password)
+      .eq('username', username)
+      .eq('password', password)
       .eq('is_active', true)
       .maybeSingle();
 
