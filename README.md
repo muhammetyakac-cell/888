@@ -1,115 +1,71 @@
-# DZY Servo Panel
+# DZY Servo Panel - Multi Tenant
 
-> Real-time IoT telemetry dashboard with remote servo control.  
-> Hardware meets cloud — ESP32 to Supabase to React.
+Bu sürümle birlikte mevcut dashboard tasarımı korunarak, üstüne **login + admin kullanıcı yönetimi** eklendi:
 
-🔴 **[Live Demo](https://esp32-henna.vercel.app/)**
+- Giriş ekranı (admin / müşteri)
+- Admin panelinden kullanıcı oluşturma
+- Kullanıcıya özel Supabase URL + anon key tanımlama
+- Oluşturulan kullanıcıların kendi ESP telemetrisini mevcut ana sayfa görünümünde izlemesi
 
-![Dashboard Preview](dzy-servo-panel/docs/screenshot.png)
+## Mimari
 
----
+### 1) Master veritabanı (panel kullanıcıları)
+Web panel ilk olarak sabit bir "master" Supabase'e bağlanır.
+Bu veritabanında `panel_users` tablosu tutulur.
 
-## The Problem
+Örnek kolonlar:
 
-Off-the-shelf remote PC control solutions required Bluetooth hubs, 
-third-party mobile apps, and constant vendor updates — creating 
-unnecessary dependency and cost.
+- `id` uuid (pk)
+- `username` text unique
+- `password` text
+- `role` text (`admin` / `customer`)
+- `customer_name` text
+- `device_id` int
+- `tenant_supabase_url` text
+- `tenant_supabase_anon_key` text
+- `is_active` bool
+- `created_at` timestamptz default now()
 
-This system replaced all of that with a custom ESP32-based device 
-and a cloud-connected dashboard. Total hardware cost: ~$15.
+### 2) Tenant veritabanı (müşteri verileri)
+Her müşteri için ayrı Supabase projesi kullanılır.
+Bu tenant projede en az:
 
----
+- `devices`
+- `device_logs`
 
-## What It Does
+olmalıdır.
 
-- **Real-time telemetry** — temperature, humidity, CPU heat, 
-  power draw, and WiFi signal streamed live via Supabase Realtime
-- **Remote servo control** — set target angle from anywhere, 
-  hardware syncs within seconds
-- **Historical analysis** — filter logs by time range (1h to 7d), 
-  visualize trends with interactive charts
-- **Offline queue** — device stores readings locally when 
-  WiFi drops, flushes on reconnect
-- **Auto-return logic** — predefined angles (70°/90°) trigger 
-  timed automatic return to 0°
+Panel, login olan kullanıcının `tenant_supabase_url` + `tenant_supabase_anon_key` bilgilerine göre dinamik client oluşturur.
 
----
+## ESP32 entegrasyonu
 
-## Architecture
+Cihazı müşteriye göndermeden önce firmware içinde aşağıdakileri müşteriye özel doldurun:
 
-ESP32 (C++ / Arduino)
-├── DHT11 sensor → ambient temp + humidity
-├── Internal sensor → CPU temperature
-├── Servo motor → position control
-└── WiFi → Supabase REST API (PATCH + INSERT)
-↓
-Supabase (PostgreSQL)
-├── devices table → live device state
-└── device_logs table → historical telemetry
-↓
-React Dashboard (Vercel)
-├── Realtime subscription → instant UI updates
-├── Recharts → area + line charts
-└── Date range picker → historical filtering
+```cpp
+const char* supabaseBaseUrl = "https://MUSTERI.supabase.co/rest/v1/devices?id=eq.1";
+const char* supabaseLogsUrl = "https://MUSTERI.supabase.co/rest/v1/device_logs";
+const char* supabaseKey     = "MUSTERI_ANON_KEY";
+```
 
----
+Aynı değerleri admin panelinden o müşterinin hesabına da girin.
+Böylece:
 
-## Hardware
+- cihaz müşterinin kendi tenantına log atar,
+- müşteri panelden giriş yapınca aynı tenant verisini görür,
+- müşteriler birbirinin verisini göremez.
 
-| Component | Purpose |
-|---|---|
-| ESP32 | Main controller, WiFi |
-| DHT11 | Temperature & humidity |
-| Servo Motor | Physical actuator |
-| OLED SSD1306 | Local display |
+## Güvenlik Notu
 
----
+Bu sürüm MVP'dir. Üretim için öneri:
 
-## Tech Stack
+- `password` yerine hash (bcrypt/argon2) saklayın,
+- kullanıcı oluşturma ve login işlemlerini Edge Function / backend ile yapın,
+- RLS politikalarını tenant izolasyonuna göre zorunlu hale getirin.
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 19, Vite, Tailwind CSS |
-| Charts | Recharts |
-| Backend | Supabase (Realtime, REST) |
-| Hardware | ESP32, Arduino framework |
-| Deployment | Vercel |
-
----
-
-## Getting Started
+## Çalıştırma
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/dzy-servo-panel
 cd dzy-servo-panel
 npm install
 npm run dev
 ```
-
-Configure your Supabase credentials in `src/App.jsx`:
-
-```js
-const supabaseUrl = 'YOUR_SUPABASE_URL';
-const supabaseKey = 'YOUR_SUPABASE_KEY';
-```
-
-Required tables: `devices`, `device_logs`
-
----
-
-## ESP32 Firmware
-
-Firmware source is included in `/firmware/sketch.ino`.  
-Built with Arduino IDE. Key dependencies:
-
-- `ArduinoJson`
-- `ESP32Servo`
-- `Adafruit SSD1306`
-- `DHT sensor library`
-
----
-
-## Developer
-
-Built by **Muhammet Deniz** — DZY Software Consulting  
-[kodingselling.vercel.app](https://kodingselling.vercel.app)
