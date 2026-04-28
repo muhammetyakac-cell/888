@@ -50,6 +50,8 @@ const char* supabaseKey     = "MUSTERI_ANON_KEY";
 Aynı değerleri admin panelinden o müşterinin hesabına da girin.
 Böylece:
 
+Hazır örnek müşteri firmware dosyası: `dzy-servo-panel/firmware/customer_device_1.ino`
+
 - cihaz müşterinin kendi tenantına log atar,
 - müşteri panelden giriş yapınca aynı tenant verisini görür,
 - müşteriler birbirinin verisini göremez.
